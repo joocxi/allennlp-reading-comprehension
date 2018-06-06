@@ -1,0 +1,22 @@
+*.pyc
+.cache/
+.coverage
+doc/_build/
+.ipynb_checkpoints
+.pytest_cache/
+
+# build artifacts
+allennlp.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache
+
+bin/
+demo/
+doc/
+scripts/
+tutorials/
+tmp/
+tests/
+.swp
