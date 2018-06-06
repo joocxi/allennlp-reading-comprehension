@@ -98,23 +98,6 @@ class SquadReader(DatasetReader):
         if not passage_tokens:
             passage_tokens = self._tokenizer.tokenize(passage_text)
         char_spans = char_spans or []
-       # fields = {}
-       # if not has_answer:
-       #     question_tokens = self._tokenizer.tokenize(question_text)
-       #     passage_field = TextField(passage_tokens, self._token_indexers)
-       #     fields['passage'] = passage_field
-       #     fields['question'] = TextField(question_tokens, self._token_indexers)
-       #     metadata = {
-       #         'original_passage' = passage_text,
-       #         'token_offsets': None,
-       #         'question_tokens': [token.text for token in question_tokens],
-       #         'passage_tokens': [token.text for token in passage_tokens]
-       #         'article_id': id
-       #         }
-       #     fields['span_start'] = IndexField(-1, passage_field.empty_field())
-       #     fields['span_end'] = IndexField(-1, passage_field.empty_field())
-       #     return Instance(fields)
-
         # We need to convert character indices in `passage_text` to token indices in
         # `passage_tokens`, as the latter is what we'll actually use for supervision.
         token_spans: List[Tuple[int, int]] = []

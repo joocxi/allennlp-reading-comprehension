@@ -1,12 +1,12 @@
 {
   "vocabulary": {
     "pretrained_files": {
-      "tokens" : "/home/vietai/snet/data/glove.6B.300d.txt.gz"
+      "tokens" : "/home/vietai/data/glove/glove.6B.100d.txt.gz"
     },
     "only_include_pretrained_words": true    
   },
   "dataset_reader": {
-    "type": "my-msmarco",
+    "type": "msmarcofix",
     "token_indexers": {
       "tokens": {
         "type": "single_id",
@@ -21,10 +21,11 @@
         }
       }
     },
-    "span_file_path": "/home/vietai/snet/data/MSMARCO/preprocessed/train_v2.0_well_formed_5_span_p1.json"
+    "span_file_path": "/home/vietai/data/MSMARCOv20/preprocessed/train_v2.0_well_formed_span_p1.json",
+    "lazy": true
   },
   "validation_dataset_reader": {
-    "type": "my-msmarco",
+    "type": "msmarcofix",
     "token_indexers": {
       "tokens": {
         "type": "single_id",
@@ -39,17 +40,18 @@
         }
       }
     },
-    "span_file_path": "/home/vietai/snet/data/MSMARCO/preprocessed/dev_v2.0_well_formed_5_span_p1.json"
+    "span_file_path": "/home/vietai/data/MSMARCOv20/preprocessed/dev_v2.0_well_formed_span_p1.json",
+    "lazy": true
   },
-  "train_data_path": "/home/vietai/snet/data/MSMARCO/train_v2.0_well_formed_5.json",
-  "validation_data_path": "/home/vietai/snet/data/MSMARCO/dev_v2.0_well_formed_5.json",
+  "train_data_path": "/home/vietai/data/MSMARCOv20/train_v2.0_well_formed.json",
+  "validation_data_path": "/home/vietai/data/MSMARCOv20/dev_v2.0_well_formed.json",
   "model": {
-    "type": "snet-phase1",
+    "type": "bidaf-copy",
     "text_field_embedder": {
       "tokens": {
         "type": "embedding",
-        "pretrained_file": "/home/vietai/snet/data/glove.6B.300d.txt.gz",
-        "embedding_dim": 300,
+        "pretrained_file": "/home/vietai/data/glove/glove.6B.100d.txt.gz",
+        "embedding_dim": 100,
         "trainable": false
       },
       "token_characters": {
@@ -67,37 +69,51 @@
         "dropout": 0.1
       }
     },
-    "question_encoder": {
-      "type": "gru",
-      "bidirectional": true,
-      "input_size": 400,
-      "hidden_size": 150,
-      "num_layers": 1,
-      "dropout": 0.1
+    "num_highway_layers": 2,
+    "phrase_layer": {
+        "type": "lstm",
+        "bidirectional": true,
+        "input_size": 200,
+        "hidden_size": 100,
+        "num_layers": 1,
+        "dropout": 0.2
     },
-    "passage_encoder": {
-      "type": "gru",
-      "bidirectional": true,
-      "input_size": 400,
-      "hidden_size": 150,
-      "num_layers": 1,
-      "dropout": 0.1
+    "similarity_function": {
+        "type": "linear",
+        "combination": "x,y,x*y",
+        "tensor_1_dim": 200,
+        "tensor_2_dim": 200
     },
-    "dropout": 0.1,
-    "r": 0.8
+    "modeling_layer": {
+      "type": "lstm",
+      "bidirectional": true,
+      "input_size": 800,
+      "hidden_size": 100,
+      "num_layers": 2,
+      "dropout": 0.2
+    },
+    "span_end_encoder": {
+        "type": "lstm",
+        "bidirectional": true,
+        "input_size": 1400,
+        "hidden_size": 100,
+        "num_layers": 1,
+        "dropout": 0.2
+    },
+    "dropout": 0.2
   },
   "iterator": {
     "type": "bucket",
-    "sorting_keys": [["passages_list", "num_fields"], ["question", "num_tokens"]],
-    "batch_size": 2
+    "sorting_keys": [["passage", "num_tokens"], ["question", "num_tokens"]],
+    "batch_size": 12
   },
 
   "trainer": {
-    "num_epochs": 10,
+    "num_epochs": 20,
     "grad_norm": 5.0,
     "patience": 10,
     "validation_metric": "-loss",
-    "cuda_device": 0,
+    "cuda_device": [0],
     "learning_rate_scheduler": {
       "type": "reduce_on_plateau",
       "factor": 0.5,
@@ -105,7 +121,8 @@
       "patience": 2
     },
     "optimizer": {
-      "type": "adadelta"
+      "type": "adam",
+      "betas": [0.9, 0.9]
     }
   }
 }
