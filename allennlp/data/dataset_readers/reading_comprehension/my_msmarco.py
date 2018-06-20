@@ -24,7 +24,7 @@ START_SYMBOL = '@@start@@'
 END_SYMBOL = '@@end@@'
 
 @DatasetReader.register("my-msmarco")
-class MSMARCOPassageReader(DatasetReader):
+class MsMarcoReader(DatasetReader):
     """
     """
     def __init__(self,
@@ -118,7 +118,7 @@ class MSMARCOPassageReader(DatasetReader):
         return Instance(fields)
 
     @classmethod
-    def from_params(cls, params: Params) -> 'MSMARCOPassageReader':
+    def from_params(cls, params: Params) -> 'MsMarcoReader':
         tokenizer = Tokenizer.from_params(params.pop('tokenizer', {}))
         token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', {}))
         span_file_path = params.pop('span_file_path', None)
@@ -132,7 +132,7 @@ class MSMARCOPassageReader(DatasetReader):
                    lazy=lazy)
 
 @DatasetReader.register("my-msmarco2")
-class MSMARCOPassageReader2(DatasetReader):
+class MsMarcoReader2(DatasetReader):
     """
     """
     def __init__(self,
@@ -281,7 +281,7 @@ class MSMARCOPassageReader2(DatasetReader):
         return Instance(fields)
 
     @classmethod
-    def from_params(cls, params: Params) -> 'MSMARCOPassageReader2':
+    def from_params(cls, params: Params) -> 'MsMarcoReader2':
         tokenizer = Tokenizer.from_params(params.pop('tokenizer', {}))
         token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', {}))
         span_file_path = params.pop('span_file_path', None)

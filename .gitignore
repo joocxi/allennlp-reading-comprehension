@@ -19,4 +19,4 @@ scripts/
 tutorials/
 tmp/
 tests/
-.swp
+*.swp

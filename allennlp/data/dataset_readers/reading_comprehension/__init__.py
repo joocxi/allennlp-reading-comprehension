@@ -7,7 +7,11 @@ These submodules contain readers for things that are predominantly reading compr
 
 from allennlp.data.dataset_readers.reading_comprehension.squad import SquadReader
 from allennlp.data.dataset_readers.reading_comprehension.triviaqa import TriviaQaReader
-from allennlp.data.dataset_readers.reading_comprehension.my_msmarco import MSMARCOPassageReader
-from allennlp.data.dataset_readers.reading_comprehension.msmarcofix import MSMARCOPassageReaderFix
-from allennlp.data.dataset_readers.reading_comprehension.msmarcov21 import MSMARCOV21
+from allennlp.data.dataset_readers.reading_comprehension.my_msmarco import MsMarcoReader
+from allennlp.data.dataset_readers.reading_comprehension.msmarcofix import MsMarcoReader
+from allennlp.data.dataset_readers.reading_comprehension.msmarcov21 import MsMarcoReader
+from allennlp.data.dataset_readers.reading_comprehension.msmarcov20_single_paragraph import MsMarcoReaderTrain, MsMarcoReaderTest
+from allennlp.data.dataset_readers.reading_comprehension.msmarcov20_confidence_train import MsMarcoReader
+from allennlp.data.dataset_readers.reading_comprehension.multi_squad_train import SquadReader
+from allennlp.data.dataset_readers.reading_comprehension.multi_squad_dev import SquadReader
 

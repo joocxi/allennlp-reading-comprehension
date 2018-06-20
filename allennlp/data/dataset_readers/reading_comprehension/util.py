@@ -30,6 +30,8 @@ def normalize_text(text: str) -> str:
                      for token in text.lower().strip(STRIPPED_CHARACTERS).split()
                      if token not in IGNORED_TOKENS])
 
+def normalize_text_msmarco(text: str) -> str:
+    return ' '.join([token for token in text.strip().lower().split()])
 
 def char_span_to_token_span(token_offsets: List[Tuple[int, int]],
                             character_span: Tuple[int, int]) -> Tuple[Tuple[int, int], bool]:

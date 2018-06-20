@@ -24,7 +24,7 @@ START_SYMBOL = '@@start@@'
 END_SYMBOL = '@@end@@'
 
 @DatasetReader.register("msmarcofix")
-class MSMARCOPassageReaderFix(DatasetReader):
+class MsMarcoReader(DatasetReader):
     """
     """
     def __init__(self,
@@ -119,7 +119,7 @@ class MSMARCOPassageReaderFix(DatasetReader):
         return Instance(fields)
 
     @classmethod
-    def from_params(cls, params: Params) -> 'MSMARCOPassageReaderFix':
+    def from_params(cls, params: Params) -> 'MsMarcoReader':
         tokenizer = Tokenizer.from_params(params.pop('tokenizer', {}))
         token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', {}))
         span_file_path = params.pop('span_file_path', None)

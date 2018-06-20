@@ -2,6 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import pdb
+import math
 
 import torch
 from torch.autograd import Variable
@@ -14,36 +15,36 @@ from allennlp.models.model import Model
 from allennlp.modules import Highway, MatrixAttention, FeedForward
 from allennlp.modules import Seq2SeqEncoder, SimilarityFunction, TimeDistributed, TextFieldEmbedder
 from allennlp.nn import util, InitializerApplicator, RegularizerApplicator
-from allennlp.training.metrics import BooleanAccuracy, CategoricalAccuracy, SquadEmAndF1
+from allennlp.training.metrics import BooleanAccuracy, CategoricalAccuracy, SquadEmAndF1, Rouge
+
+from allennlp.modules.tri_linear_attention import TriLinearAttention
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-@Model.register("multi-squad")
-class ModelSQUAD(Model):
+@Model.register("model-msmarcov20-sum-obj")
+class ModelMSMARCO(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
-                 num_highway_layers: int,
+             #    num_highway_layers: int,
                  phrase_layer: Seq2SeqEncoder,
                  attention_similarity_function: SimilarityFunction,
-                 modeling_layer: Seq2SeqEncoder,
+                 residual_encoder: Seq2SeqEncoder,
                  span_start_encoder: Seq2SeqEncoder,
                  span_end_encoder: Seq2SeqEncoder,
-                 feed_forward: FeedForward,
                  dropout: float = 0.2,
                  mask_lstms: bool = True,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None) -> None:
-        super(ModelSQUAD, self).__init__(vocab, regularizer)
+        super(ModelMSMARCO, self).__init__(vocab, regularizer)
 
         self._text_field_embedder = text_field_embedder
-        self._highway_layer = TimeDistributed(Highway(text_field_embedder.get_output_dim(),
-                                                      num_highway_layers))
+       # self._highway_layer = TimeDistributed(Highway(text_field_embedder.get_output_dim(),
+       #                                               num_highway_layers))
         self._phrase_layer = phrase_layer
         self._matrix_attention = MatrixAttention(attention_similarity_function)
-        self._modeling_layer = modeling_layer
+        self._residual_encoder = residual_encoder
         self._span_end_encoder = span_end_encoder
         self._span_start_encoder = span_start_encoder
-        self._feed_forward = feed_forward
 
         encoding_dim = phrase_layer.get_output_dim()
         self._span_start_predictor = TimeDistributed(torch.nn.Linear(encoding_dim, 1))
@@ -56,18 +57,22 @@ class ModelSQUAD(Model):
         self._linear_layer = TimeDistributed(torch.nn.Linear(4*encoding_dim, encoding_dim))
         self._residual_linear_layer = TimeDistributed(torch.nn.Linear(3*encoding_dim, encoding_dim))
 
-        self._w_x = torch.nn.Parameter(torch.Tensor(encoding_dim))
-        self._w_y = torch.nn.Parameter(torch.Tensor(encoding_dim))
-        self._w_xy = torch.nn.Parameter(torch.Tensor(encoding_dim))
-        std = math.sqrt(6/ (encoding_dim*3 + 1))
-        self._w_x.data.uniform_(-std, std)
-        self._w_y.data.uniform_(-std, std)
-        self._w_xy.data.uniform_(-std, std)
+        self._self_atten = TriLinearAttention(encoding_dim)
+        
+        #self._w_x = torch.nn.Parameter(torch.Tensor(encoding_dim))
+        #self._w_y = torch.nn.Parameter(torch.Tensor(encoding_dim))
+        #self._w_xy = torch.nn.Parameter(torch.Tensor(encoding_dim))
+
+        #std = math.sqrt(6 / (encoding_dim + 1))
+        #self._w_x.data.uniform_(-std, std)
+        #self._w_y.data.uniform_(-std, std)
+        #self._w_xy.data.uniform_(-std, std)
 
         self._span_start_accuracy = CategoricalAccuracy()
         self._span_end_accuracy = CategoricalAccuracy()
         self._span_accuracy = BooleanAccuracy()
         self._squad_metrics = SquadEmAndF1()
+        self._rouge_metric = Rouge()
         if dropout > 0:
             self._dropout = torch.nn.Dropout(p=dropout)
         else:
@@ -81,11 +86,12 @@ class ModelSQUAD(Model):
                 passage: Dict[str, torch.LongTensor],
                 span_start: torch.LongTensor = None,
                 span_end: torch.LongTensor = None,
-                spans = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
-        embedded_question = self._highway_layer(self._text_field_embedder(question))
-        embedded_passage = self._highway_layer(self._text_field_embedder(passage))
+        #embedded_question = self._highway_layer(self._text_field_embedder(question))
+        #embedded_passage = self._highway_layer(self._text_field_embedder(passage))
+        embedded_question = self._dropout(self._text_field_embedder(question))
+        embedded_passage = self._dropout(self._text_field_embedder(passage))
         batch_size = embedded_question.size(0)
         passage_length = embedded_passage.size(1)
         question_mask = util.get_text_field_mask(question).float()
@@ -96,8 +102,6 @@ class ModelSQUAD(Model):
         encoded_question = self._dropout(self._phrase_layer(embedded_question, question_lstm_mask))
         encoded_passage = self._dropout(self._phrase_layer(embedded_passage, passage_lstm_mask))
         encoding_dim = encoded_question.size(-1)
-        
-        cuda_device = encoded_question.get_device()
 
         # Shape: (batch_size, passage_length, question_length)
         passage_question_similarity = self._matrix_attention(encoded_passage, encoded_question)
@@ -134,19 +138,22 @@ class ModelSQUAD(Model):
         # TODO: attach residual self-attention layer
         # Shape: (batch_size, passage_length, encoding_dim)
         residual_passage = self._dropout(self._residual_encoder(self._dropout(question_attended_passage), passage_lstm_mask))
+
         mask = passage_mask.resize(batch_size, passage_length, 1) * passage_mask.resize(batch_size, 1, passage_length)
-        self_mask = Variable(torch.eye(passage_length, passage_length).cuda(cuda_device)).resize(1, passage_length, passage_length)
+        self_mask = Variable(torch.eye(passage_length, passage_length).cuda()).resize(1, passage_length, passage_length)
         mask = mask * (1 - self_mask)
-        # Shape: (batch_size, passage_length, passage_length)
-        x_similarity = torch.matmul(residual_passage, self._w_x).unsqueeze(2)
-        y_similarity = torch.matmul(residual_passage, self._w_y).unsqueeze(1)
-        dot_similarity = torch.bmm(residual_passage*self._w_xy, residual_passage.transpose(1, 2))
-        passage_self_similarity = dot_similarity + x_similarity + y_similarity
+        #x_similarity = torch.matmul(residual_passage, self._w_x).unsqueeze(2)
+        #y_similarity = torch.matmul(residual_passage, self._w_y).unsqueeze(1)
+        #dot_similarity = torch.bmm(residual_passage*self._w_xy, residual_passage.transpose(1, 2))
+        #passage_self_similarity = dot_similarity + x_similarity + y_similarity
+        #passage_self_similarity = self._self_matrix_attention(encoded_passage, encoded_passage)
+        passage_self_similarity = self._self_atten(residual_passage, residual_passage)
         #for i in range(passage_length):
         #    passage_self_similarity[:, i, i] = float('-Inf')
         # Shape: (batch_size, passage_length, passage_length)
         passage_self_attention = util.last_dim_softmax(passage_self_similarity, mask)
         # Shape: (batch_size, passage_length, encoding_dim)
+        #passage_vectors = torch.matmul(passage_self_attention, residual_passage)
         passage_vectors = util.weighted_sum(residual_passage, passage_self_attention)
         # Shape: (batch_size, passage_length, encoding_dim * 3)
         merged_passage = torch.cat([residual_passage,
@@ -158,6 +165,9 @@ class ModelSQUAD(Model):
 
         # Shape: (batch_size, passage_length, encoding_dim)
         mixed_passage = question_attended_passage + self_attended_passage
+        
+        #add
+        mixed_passage = self._dropout(mixed_passage)
         
         # Shape: (batch_size, passage_length, encoding_dim)
         encoded_span_start = self._dropout(self._span_start_encoder(mixed_passage, passage_lstm_mask))
@@ -171,17 +181,6 @@ class ModelSQUAD(Model):
         span_end_logits = self._span_end_predictor(encoded_span_end).squeeze(-1)
         span_end_probs = util.masked_softmax(span_end_logits, passage_mask)
 
-        # Shape: (batch_size, encoding_dim) 
-        v_1 = util.weighted_sum(encoded_span_start, span_start_probs)
-        v_2 = util.weighted_sum(encoded_span_end, span_end_probs)
-        
-        no_span_logits = self._no_answer_predictor(self_attended_passage).squeeze(-1)
-        no_span_probs = util.masked_softmax(no_span_logits, passage_mask)
-        v_3 = util.weighted_sum(self_attended_passage, no_span_probs)
-        # Shape: (batch_size, 1)
-        z_score = self._feed_forward(torch.cat([v_1, v_2, v_3], dim=-1))
-        # compute no-answer score
-
         span_start_logits = util.replace_masked_values(span_start_logits, passage_mask, -1e7)
         span_end_logits = util.replace_masked_values(span_end_logits, passage_mask, -1e7)
         best_span = self.get_best_span(span_start_logits, span_end_logits)
@@ -194,54 +193,14 @@ class ModelSQUAD(Model):
                 "span_end_probs": span_end_probs,
                 "best_span": best_span,
                 }
-        # create target tensor including no-answer label
-        span_target = Variable(torch.ones(batch_size).long()).cuda(cuda_device)
-        for b in range(batch_size):
-            span_target[b].data[0] = span_start[b, 0].data[0] * passage_length + span_end[b, 0].data[0] 
-        span_target[span_target<0] = passage_length**2
-
-        # Shape: (batch_size, passage_length, passage_length)
-        span_start_logits_tiled = span_start_logits.unsqueeze(1).expand(batch_size, passage_length, passage_length)
-        span_end_logits_tiled = span_end_logits.unsqueeze(-1).expand(batch_size, passage_length, passage_length)
-        span_logits = (span_start_logits_tiled + span_end_logits_tiled).view(batch_size, -1)
-        answer_mask = torch.bmm(passage_mask.unsqueeze(-1), passage_mask.unsqueeze(1)).view(batch_size, -1)
-        no_answer_mask = Variable(torch.ones(batch_size, 1)).cuda(cuda_device)
-        combined_mask = torch.cat([answer_mask, no_answer_mask], dim=1)
-        all_logits = torch.cat([span_logits, z_score], dim=-1)
-        loss = nll_loss(util.masked_log_softmax(all_logits, combined_mask), span_target)
-        output_dict["loss"] = loss
-
-        # Shape(batch_size, max_answers, num_span)
-        #    max_answers = spans.size(1)
-        #    span_logits = torch.bmm(span_start_logits.unsqueeze(-1), span_end_logits.unsqueeze(1)).view(batch_size, -1)
-        #    answer_mask = torch.bmm(passage_mask.unsqueeze(-1), passage_mask.unsqueeze(1)).view(batch_size, -1)
-        #    no_answer_mask = Variable(torch.ones(batch_size, 1)).cuda(cuda_device)
-        #    combined_mask = torch.cat([answer_mask, no_answer_mask], dim=1)
-        #    # Shape: (batch_size, passage_length**2 + 1)
-        #    all_logits = torch.cat([span_logits, z_score], dim=-1)
-        #    # Shape: (batch_size, max_answers)
-        #    spans_combined = spans[:, :, 0] * passage_length + spans[:, :, 1]
-        #    spans_combined[spans_combined < 0] = passage_length*passage_length
-        #    
-        #    all_modified_logits = []
-        #    for b in range(batch_size):
-        #        idxs = Variable(torch.LongTensor(range(passage_length**2 + 1))).cuda(cuda_device)
-        #        for i in range(max_answers):
-        #            idxs[spans_combined[b, i].data[0]].data = idxs[spans_combined[b, 0].data[0]].data
-        #        idxs[passage_length**2].data[0] = passage_length**2 
-
-        #        modified_logits = Variable(torch.zeros(all_logits.size(-1))).cuda(cuda_device)
-        #        modified_logits.index_add_(0, idxs, all_logits[b])
-        #        all_modified_logits.append(modified_logits)
-
-        #    all_modified_logits = torch.stack(all_modified_logits, dim=0)
-        #    loss = nll_loss(util.masked_log_softmax(all_modified_logits, combined_mask), spans_combined[:, 0])
-        #    output_dict["loss"] = loss
 
         if span_start is not None:
+            loss = nll_loss(util.masked_log_softmax(span_start_logits, passage_mask), span_start.squeeze(-1))
             self._span_start_accuracy(span_start_logits, span_start.squeeze(-1))
+            loss += nll_loss(util.masked_log_softmax(span_end_logits, passage_mask), span_end.squeeze(-1))
             self._span_end_accuracy(span_end_logits, span_end.squeeze(-1))
             self._span_accuracy(best_span, torch.stack([span_start, span_end], -1))
+            output_dict["loss"] = loss
 
         # Compute the EM and F1 on SQuAD and add the tokenized input to the output.
         if metadata is not None:
@@ -261,6 +220,7 @@ class ModelSQUAD(Model):
                 answer_texts = metadata[i].get('answer_texts', [])
                 if answer_texts:
                     self._squad_metrics(best_span_string, answer_texts)
+                    self._rouge_metric(best_span_string, answer_texts)
             output_dict['question_tokens'] = question_tokens
             output_dict['passage_tokens'] = passage_tokens
         return output_dict
@@ -268,11 +228,12 @@ class ModelSQUAD(Model):
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         exact_match, f1_score = self._squad_metrics.get_metric(reset)
         return {
-                'start_acc': self._span_start_accuracy.get_metric(reset),
-                'end_acc': self._span_end_accuracy.get_metric(reset),
-                'span_acc': self._span_accuracy.get_metric(reset),
+                #'start_acc': self._span_start_accuracy.get_metric(reset),
+                #'end_acc': self._span_end_accuracy.get_metric(reset),
+                #'span_acc': self._span_accuracy.get_metric(reset),
                 'em': exact_match,
                 'f1': f1_score,
+                'rouge': self._rouge_metric.get_metric(reset),
                 }
 
     @staticmethod
@@ -304,16 +265,16 @@ class ModelSQUAD(Model):
         return best_word_span
 
     @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'ModelSQUAD':
+    def from_params(cls, vocab: Vocabulary, params: Params) -> 'ModelMSMARCO':
         embedder_params = params.pop("text_field_embedder")
         text_field_embedder = TextFieldEmbedder.from_params(vocab, embedder_params)
-        num_highway_layers = params.pop_int("num_highway_layers")
+        #num_highway_layers = params.pop_int("num_highway_layers")
         phrase_layer = Seq2SeqEncoder.from_params(params.pop("phrase_layer"))
         similarity_function = SimilarityFunction.from_params(params.pop("similarity_function"))
-        modeling_layer = Seq2SeqEncoder.from_params(params.pop("modeling_layer"))
+        residual_encoder = Seq2SeqEncoder.from_params(params.pop("residual_encoder"))
         span_start_encoder = Seq2SeqEncoder.from_params(params.pop("span_start_encoder"))
         span_end_encoder = Seq2SeqEncoder.from_params(params.pop("span_end_encoder"))
-        feed_forward = FeedForward.from_params(params.pop("feed_forward"))
+        #feed_forward = FeedForward.from_params(params.pop("feed_forward"))
         dropout = params.pop_float('dropout', 0.2)
 
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
@@ -323,13 +284,12 @@ class ModelSQUAD(Model):
         params.assert_empty(cls.__name__)
         return cls(vocab=vocab,
                    text_field_embedder=text_field_embedder,
-                   num_highway_layers=num_highway_layers,
+            #       num_highway_layers=num_highway_layers,
                    phrase_layer=phrase_layer,
                    attention_similarity_function=similarity_function,
-                   modeling_layer=modeling_layer,
+                   residual_encoder=residual_encoder,
                    span_start_encoder=span_start_encoder,
                    span_end_encoder=span_end_encoder,
-                   feed_forward=feed_forward,
                    dropout=dropout,
                    mask_lstms=mask_lstms,
                    initializer=initializer,

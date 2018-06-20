@@ -11,6 +11,7 @@ from allennlp.data.instance import Instance
 from allennlp.data.dataset_readers.reading_comprehension import util
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
+from allennlp.data.fields import TextField, IndexField, ListField
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
@@ -18,6 +19,7 @@ from sklearn.metrics import pairwise_distances
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 import pdb
+import numpy as np
 
 @DatasetReader.register("multi-squad-train")
 class SquadReader(DatasetReader):
@@ -47,6 +49,7 @@ class SquadReader(DatasetReader):
         super().__init__(lazy)
         self._tokenizer = tokenizer or WordTokenizer()
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
+        self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words="english")
 
     @overrides
     def _read(self, file_path: str):
@@ -59,74 +62,72 @@ class SquadReader(DatasetReader):
             dataset = dataset_json['data']
 
         logger.info("Reading the dataset")
-        for id, article in enumerate(dataset):
-            para_list = []
+        for article in dataset:
+            paragraphs = []
             for paragraph_json in article['paragraphs']:
                 paragraph = paragraph_json['context']
-                para_list.append(paragraph)
+                paragraphs.append(paragraph)
 
-            para_features = self._tfidf.fit_transform(para_list)
+            paragraph_features = self._tfidf.fit_transform(paragraphs)
 
             for paragraph_json in article['paragraphs']:
                 correct_paragraph = paragraph_json['context']
-                for question_answer in paragraph_json['qas']
+                for question_answer in paragraph_json['qas']:
                     question_text = question_answer["question"].strip().replace("\n", "")
                     question_features = self._tfidf.transform([question_text])
-                    distances = pairwise_distances(question_features, para_features, "cosine").ravel()
-                    sorted_paras = np.lexsort((para_list, distances))
-                    _contain_correct_para = False
-                    for i in range(4):
-                        para = para_list[sorted_paras[i]]
-                        tokenized_para = self._tokenizer.tokenize(para)
-                        if para == corect_paragraph or (i == 3 and _contain_correct_para == False) :
-                            para = correct_paragraph
-                            _contain_correct_para = True
-                            answer_texts = [answer['text'] for answer in question_answer['answers']]
-                            span_starts = [answer['answer_start'] for answer in question_answer['answers']]
-                            span_ends = [start + len(answer) for start, answer in zip(span_starts, answer_texts)]
-                            instance = self.text_to_instance(question_text,
-                                                             para,
-                                                             zip(span_starts, span_ends),
-                                                             answer_texts,
-                                                             tokenized_para,
-                                                             True)
-                            yield instance
-                        else:
-                            instance = self.text_to_instance(question_text,
-                                                             para,
-                                                             None,
-                                                             None,
-                                                             tokenized_para,
-                                                             False)
-                            yield instance
+                    distances = pairwise_distances(question_features, paragraph_features, "cosine").ravel()
+                    sorted_paras = np.lexsort((paragraphs, distances))
+
+                    selected_paragraphs = []
+                    paragraph_field = TextField(self._tokenizer.tokenize(correct_paragraph), self._token_indexers)
+                    selected_paragraphs.append(paragraph_field)
+
+                    answer_texts = [answer['text'] for answer in question_answer['answers']]
+                    span_starts = [answer['answer_start'] for answer in question_answer['answers']]
+                    span_ends = [start + len(answer) for start, answer in zip(span_starts, answer_texts)]
+
+                    instance = self.text_to_instance(question_text,
+                                                     correct_paragraph,
+                                                     zip(span_starts, span_ends),
+                                                     answer_texts)
+                    idx = 0
+                    while len(selected_paragraphs) < 4:
+                        paragraph = paragraphs[sorted_paras[idx]]
+                        if paragraph != correct_paragraph:
+                            paragraph_field = TextField(self._tokenizer.tokenize(paragraph), self._token_indexers)
+                            selected_paragraphs.append(paragraph_field)
+                        idx += 1
+
+                    passages_field = ListField(selected_paragraphs)
+                    instance.fields['passage'] = passages_field
+                    yield instance
+
     @overrides
     def text_to_instance(self,  # type: ignore
                          question_text: str,
                          passage_text: str,
                          char_spans: List[Tuple[int, int]] = None,
                          answer_texts: List[str] = None,
-                         passage_tokens: List[Token] = None,
-                         has_answer: bool) -> Instance:
+                         passage_tokens: List[Token] = None) -> Instance:
         # pylint: disable=arguments-differ
         if not passage_tokens:
             passage_tokens = self._tokenizer.tokenize(passage_text)
         char_spans = char_spans or []
         fields = {}
-        if not has_answer:
-            question_tokens = self._tokenizer.tokenize(question_text)
-            passage_field = TextField(passage_tokens, self._token_indexers)
-            fields['passage'] = passage_field
-            fields['question'] = TextField(question_tokens, self._token_indexers)
-            metadata = {
-                'original_passage' = passage_text,
-                'token_offsets': None,
-                'question_tokens': [token.text for token in question_tokens],
-                'passage_tokens': [token.text for token in passage_tokens]
-                'article_id': id
-                }
-            fields['span_start'] = IndexField(-1, passage_field.empty_field())
-            fields['span_end'] = IndexField(-1, passage_field.empty_field())
-            return Instance(fields)
+       # if not has_answer:
+       #     question_tokens = self._tokenizer.tokenize(question_text)
+       #     passage_field = TextField(passage_tokens, self._token_indexers)
+       #     fields['passage'] = passage_field
+       #     fields['question'] = TextField(question_tokens, self._token_indexers)
+       #     metadata = {
+       #         'original_passage': passage_text,
+       #         'token_offsets': None,
+       #         'question_tokens': [token.text for token in question_tokens],
+       #         'passage_tokens': [token.text for token in passage_tokens]
+       #         }
+       #     fields['span_start'] = IndexField(-1, passage_field.empty_field())
+       #     fields['span_end'] = IndexField(-1, passage_field.empty_field())
+       #     return Instance(fields)
 
         # We need to convert character indices in `passage_text` to token indices in
         # `passage_tokens`, as the latter is what we'll actually use for supervision.

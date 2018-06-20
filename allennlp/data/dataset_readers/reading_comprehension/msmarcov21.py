@@ -25,7 +25,7 @@ START_SYMBOL = '@@start@@'
 END_SYMBOL = '@@end@@'
 
 @DatasetReader.register("msmarco-v21")
-class MSMARCOV21(DatasetReader):
+class MsMarcoReader(DatasetReader):
     def __init__(self,
                  tokenizer: Tokenizer = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
@@ -159,7 +159,7 @@ class MSMARCOV21(DatasetReader):
         return Instance(fields)
 
     @classmethod
-    def from_params(cls, params: Params) -> 'MSMARCOV21':
+    def from_params(cls, params: Params) -> 'MsMarcoReader':
         tokenizer = Tokenizer.from_params(params.pop('tokenizer', {}))
         token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', {}))
         span_file_path = params.pop('span_file_path', None)

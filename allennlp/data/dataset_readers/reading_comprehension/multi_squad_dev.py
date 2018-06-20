@@ -11,6 +11,7 @@ from allennlp.data.instance import Instance
 from allennlp.data.dataset_readers.reading_comprehension import util
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
+from allennlp.data.fields import TextField, ListField
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
@@ -59,19 +60,21 @@ class SquadReader(DatasetReader):
             dataset = dataset_json['data']
 
         logger.info("Reading the dataset")
-        for article in enumerate(dataset):
-            para_list = []
+        for article in dataset:
+            paragraph_fields = []
+            paragraphs = []
             for paragraph_json in article['paragraphs']:
                 paragraph = paragraph_json['context']
                 tokenized_paragraph = self._tokenizer.tokenize(paragraph)
-                passage_field = TextField(tokenized_paragraph, self._token_indexers)
-                para_list.append(paragraph)
+                paragraph_field = TextField(tokenized_paragraph, self._token_indexers)
+                paragraph_fields.append(paragraph_field)
+                paragraphs.append(paragraph)
 
-            passage_list_field = ListField(para_list)
+            passages_field = ListField(paragraph_fields)
 
-            for paragraph_json in article['paragraphs']:
+            for idx, paragraph_json in enumerate(article['paragraphs']):
                 correct_paragraph = paragraph_json['context']
-                for question_answer in paragraph_json['qas']
+                for question_answer in paragraph_json['qas']:
                     question_text = question_answer["question"].strip().replace("\n", "")
                     question_tokens = self._tokenizer.tokenize(question_text)
                     question_field = TextField(question_tokens, self._token_indexers)
@@ -84,7 +87,11 @@ class SquadReader(DatasetReader):
                                                      correct_paragraph,
                                                      zip(span_starts, span_ends),
                                                      answer_texts)
-                    instance.fields['passages'] = passage_list_field
+                    instance.fields['passage'] = passages_field
+                    instance.fields['metadata'].metadata['correct_passage'] = idx
+                    passage_offsets = [[(token.idx, token.idx + len(token.text)) for token in passage_field.tokens] for passage_field in paragraph_fields]
+                    instance.fields['metadata'].metadata['passage_offsets'] = passage_offsets 
+                    instance.fields['metadata'].metadata['all_passages'] = paragraphs
                     yield instance
                 
     @overrides

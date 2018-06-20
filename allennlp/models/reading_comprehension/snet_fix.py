@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 ITE = 0
 
 @Model.register("snet-fix")
-class EvidenceExtractionFix(Model):
+class EvidenceExtraction(Model):
     def __init__(self, vocab: Vocabulary,
                  embedder: TextFieldEmbedder,
                  question_encoder: Seq2SeqEncoder,
@@ -32,7 +32,7 @@ class EvidenceExtractionFix(Model):
                  dropout: float = 0.1,
 		 initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None) -> None:
-        super(EvidenceExtractionFix, self).__init__(vocab, regularizer)
+        super(EvidenceExtraction, self).__init__(vocab, regularizer)
 
         self._embedder = embedder
 
@@ -174,9 +174,6 @@ class EvidenceExtractionFix(Model):
         _, max_start = torch.max(span_start_probs, dim=1)
         _, max_end = torch.max(span_end_probs, dim=1)
         #t3 = time.time()
-        #for b in range(batch_size):
-        #    max_start.data[b] = cumsum.data[b, max_start.data[b]] - 1
-        #    max_end.data[b] = cumsum.data[b, max_end.data[b]] - 1
         output_dict['span_start_idx'] = max_start
         output_dict['span_end_idx'] = max_end
         #t4 = time.time()
@@ -192,7 +189,7 @@ class EvidenceExtractionFix(Model):
         return output_dict
 
     @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'EvidenceExtractionFix':
+    def from_params(cls, vocab: Vocabulary, params: Params) -> 'EvidenceExtraction':
         embedder_params = params.pop("text_field_embedder")
         embedder = TextFieldEmbedder.from_params(vocab, embedder_params)
         question_encoder = Seq2SeqEncoder.from_params(params.pop("question_encoder"))
