@@ -13,6 +13,10 @@ from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 from allennlp.data.fields import TextField, MetadataField, IndexField, ArrayField, SpanField, LabelField, ListField
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import pairwise_distances
+
+import pdb
 import numpy as np
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -20,7 +24,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 START_SYMBOL = '@@start@@'
 END_SYMBOL = '@@end@@'
 
-@DatasetReader.register("msmarcov20-single-paragraph-train")
+@DatasetReader.register("msmarcov20-confidence-train")
 class MsMarcoReaderTrain(DatasetReader):
     """
     """
@@ -35,7 +39,7 @@ class MsMarcoReaderTrain(DatasetReader):
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
         self._span_file_path = span_file_path
         self._extraction_model_path = extraction_model_path
-
+        self._tfidf = TfidfVectorizer(strip_accents="unicode", stop_words="english")
 
     @overrides
     def _read(self, file_path: str):
@@ -51,55 +55,65 @@ class MsMarcoReaderTrain(DatasetReader):
         for data, best_span in zip(dataset, span_file):
             answer = data['answers'][0]
             question = data['query']
-            #well_formed_answer = data['wellFormedAnswers'][0]
+            well_formed_answer = data['wellFormedAnswers'][0]
             passages_json = data['passages']
             passages = [passages_json[i]['passage_text'] for i in range(len(passages_json))]
             passages_is_selected = [passages_json[i]['is_selected'] for i in range(len(passages_json))]
-
+            
             normalized_answer = util.normalize_text_msmarco(answer)
+            tokenized_answer = self._tokenizer.tokenize(normalized_answer)
+            # set question field
             normalized_question = util.normalize_text_msmarco(question)
             tokenized_question = self._tokenizer.tokenize(normalized_question)
             question_field = TextField(tokenized_question, self._token_indexers)
             fields = {'question': question_field}
-
+            # get preprocessed span
             start_idx, end_idx, rouge_score, passage_idx = None, None, None, None
             start_idx, end_idx, passage_idx, rouge_score = best_span.strip().split(' ')
             start_idx, end_idx, passage_idx, rouge_score = int(start_idx), int(end_idx), int(passage_idx), float(rouge_score)
-
-            #if start_idx + 1 > end_idx:
-            #    continue
+            # skip contexts that have less than 4 paragraphs
+            if len(passages) < 4:
+                continue
+            # only train instances with rouge score larger than 0.9
             if rouge_score > 0.9:
+                # rank passsages based on tf-idf score
+                passage_features = self._tfidf.fit_transform(passages)
+                question_features = self._tfidf.transform([normalized_question])
+                distances = pairwise_distances(question_features, passage_features, "cosine").ravel()
+                sorted_passages = np.lexsort((passages, distances))
+                # choose 4 passages with highest tf-idf score
+                selected_passages = []
+                ## choose golden passage first
                 normalized_passage = util.normalize_text_msmarco(passages[passage_idx])
                 tokenized_passage = self._tokenizer.tokenize(normalized_passage)
                 passage_field = TextField(tokenized_passage, self._token_indexers)
-                fields['passage'] = passage_field
-
+                selected_passages.append(passage_field)
+                ## set span field from golden passage
                 span_start_field = IndexField(start_idx, passage_field)
                 span_end_field = IndexField(end_idx, passage_field)
-
                 fields['span_start'] = span_start_field
                 fields['span_end'] = span_end_field
-                
-                passage_offsets = [(token.idx, token.idx + len(token.text)) for token in tokenized_passage]
-
-                metadata = {
-                        'original_passage': normalized_passage,
-                        'token_offsets': passage_offsets,
-                        'question_tokens': [token.text for token in tokenized_question],
-                        'passage_tokens': [token.text for token in tokenized_passage]
-                        }
-                
-                if answer:
-                    metadata['answer_texts'] = [normalized_answer] 
-
-                fields['metadata'] = MetadataField(metadata)
+                ## choose three others with highest tf-idf score
+                idx = 0
+                while len(selected_passages) < 4:
+                    if sorted_passages[idx] != passage_idx:
+                        normalized_passage = util.normalize_text_msmarco(passages[sorted_passages[idx]])
+                        tokenized_passage = self._tokenizer.tokenize(normalized_passage)
+                        passage_field = TextField(tokenized_passage, self._token_indexers)
+                        selected_passages.append(passage_field)
+                    idx += 1
+                fields['passage'] = ListField(selected_passages)
                 yield Instance(fields)
 
-
     @overrides
-    def text_to_instance(self) -> Instance:  # type: ignore
+    def text_to_instance(self,  # type: ignore
+            answer: str,
+            question: str,
+            passages: List[str],
+            passages_length: List[int],
+            passages_is_selected: List[int],
+            concatenated_passage: str) -> Instance:
         return None
-
 
     @classmethod
     def from_params(cls, params: Params) -> 'MsMarcoReaderTrain':
@@ -116,7 +130,7 @@ class MsMarcoReaderTrain(DatasetReader):
                    lazy=lazy)
 
 
-@DatasetReader.register("msmarcov20-single-paragraph-test")
+@DatasetReader.register("msmarcov20-confidence-test")
 class MsMarcoReaderTest(DatasetReader):
     """
     """
@@ -132,7 +146,6 @@ class MsMarcoReaderTest(DatasetReader):
         self._span_file_path = span_file_path
         self._extraction_model_path = extraction_model_path
 
-
     @overrides
     def _read(self, file_path: str):
         file_path = cached_path(file_path)
@@ -141,49 +154,50 @@ class MsMarcoReaderTest(DatasetReader):
         with open(file_path) as dataset_file:
             dataset = json.load(dataset_file)
 
+        span_file = open(self._span_file_path)
+
         logger.info("Reading the dataset")
-        for data in dataset:
+        for data, best_span in zip(dataset, span_file):
             answer = data['answers'][0]
             question = data['query']
-            #well_formed_answer = data['wellFormedAnswers'][0]
+            well_formed_answer = data['wellFormedAnswers'][0]
             passages_json = data['passages']
             passages = [passages_json[i]['passage_text'] for i in range(len(passages_json))]
             passages_is_selected = [passages_json[i]['is_selected'] for i in range(len(passages_json))]
-
+            # normalize answer text
             normalized_answer = util.normalize_text_msmarco(answer)
+            # set question field
             normalized_question = util.normalize_text_msmarco(question)
             tokenized_question = self._tokenizer.tokenize(normalized_question)
             question_field = TextField(tokenized_question, self._token_indexers)
             fields = {'question': question_field}
-
-            for passage_idx, is_selected in enumerate(passages_is_selected): 
-                if is_selected:
-                    normalized_passage = util.normalize_text_msmarco(passages[passage_idx])
-                    tokenized_passage = self._tokenizer.tokenize(normalized_passage)
-                    passage_field = TextField(tokenized_passage, self._token_indexers)
-                    fields['passage'] = passage_field
-                
-                    passage_offsets = [(token.idx, token.idx + len(token.text)) for token in tokenized_passage]
-
-                    metadata = {
-                        'original_passage': normalized_passage,
-                        'token_offsets': passage_offsets,
-                        'question_tokens': [token.text for token in tokenized_question],
-                        'passage_tokens': [token.text for token in tokenized_passage]
-                        }
-                
-                    if answer:
-                        metadata['answer_texts'] = [normalized_answer] 
-
-                    fields['metadata'] = MetadataField(metadata)
-                    yield Instance(fields)
-                    break
-
+            # set passage field
+            normalized_passages = [util.normalize_text_msmarco(p) for p in passages]
+            tokenized_passages = [self._tokenizer.tokenize(p) for p in normalized_passages] 
+            passage_fields = []
+            for tokenized_passage in tokenized_passages:
+                passage_field = TextField(tokenized_passage, self._token_indexers)
+                passage_fields.append(passage_field)
+            fields['passage'] = ListField(passage_fields)
+            # set metadata
+            metadata = {
+                'question_tokens': [token.text for token in tokenized_question],
+                'passage_offsets': [[(token.idx, token.idx + len(token.text)) for token in passage_field.tokens] for passage_field in passage_fields],
+                'all_passages': normalized_passages,
+                'answer_texts': [normalized_answer]
+                }
+            fields['metadata'] = MetadataField(metadata)
+            yield Instance(fields)
 
     @overrides
-    def text_to_instance(self) -> Instance:  # type: ignore
+    def text_to_instance(self,  # type: ignore
+            answer: str,
+            question: str,
+            passages: List[str],
+            passages_length: List[int],
+            passages_is_selected: List[int],
+            concatenated_passage: str) -> Instance:
         return None
-
 
     @classmethod
     def from_params(cls, params: Params) -> 'MsMarcoReaderTest':

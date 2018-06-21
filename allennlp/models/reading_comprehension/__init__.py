@@ -16,6 +16,7 @@ from allennlp.models.reading_comprehension.rnet_squad import EvidenceExtraction
 from allennlp.models.reading_comprehension.modelv21 import ModelV21
 from allennlp.models.reading_comprehension.model_squad import ModelSQUAD
 from allennlp.models.reading_comprehension.confidence_model_for_squad import ModelSQUAD
-from allennlp.models.reading_comprehension.share_norm_squad import ModelSQUAD
-from allennlp.models.reading_comprehension.no_answer_squad import ModelSQUAD
+from allennlp.models.reading_comprehension.model_squad_sharenorm import ModelSQUAD
+from allennlp.models.reading_comprehension.model_squad_noanswer import ModelSQUAD
 from allennlp.models.reading_comprehension.model_msmarcov20 import ModelMSMARCO
+from allennlp.models.reading_comprehension.model_msmarcov20_sharenorm import ModelMSMARCO

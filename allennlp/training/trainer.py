@@ -633,7 +633,7 @@ class Trainer:
         logger.info("Validating")
 
         self._model.eval()
-
+        # decrease batch size when validating (added by lct)
         self._iterator._batch_size = int(self._iterator._batch_size/2)
         val_generator = self._iterator(self._validation_data,
                                        num_epochs=1,
@@ -661,6 +661,7 @@ class Trainer:
             description = self._description_from_metrics(val_metrics)
             val_generator_tqdm.set_description(description, refresh=False)
 
+        # restore batch size after validating (added by lct)
         self._iterator._batch_size *= 2
         return val_loss, batches_this_epoch
 

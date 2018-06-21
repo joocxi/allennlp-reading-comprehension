@@ -96,11 +96,9 @@ class ModelSQUAD(Model):
         # Shape: (batch_size, num_passage=4, passage_length, embedding_dim)
         embedded_passage = self._text_field_embedder(passage)
         passage_mask = util.get_text_field_mask(passage, 1).float()
-
         # get some parameters 
         cuda_device = embedded_passage.get_device()
         batch_size, num_passage, passage_length, embedding_dim = embedded_passage.size()
-        
         # when training, select randomly 2 passages from 4 passages each epoch
         if self.training:
             num_passage = 2
