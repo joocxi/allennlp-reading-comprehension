@@ -19,4 +19,5 @@ from allennlp.models.reading_comprehension.confidence_model_for_squad import Mod
 from allennlp.models.reading_comprehension.model_squad_sharenorm import ModelSQUAD
 from allennlp.models.reading_comprehension.model_squad_noanswer import ModelSQUAD
 from allennlp.models.reading_comprehension.model_msmarcov20 import ModelMSMARCO
+from allennlp.models.reading_comprehension.model_msmarcov20_sumobj import ModelMSMARCO
 from allennlp.models.reading_comprehension.model_msmarcov20_sharenorm import ModelMSMARCO

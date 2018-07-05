@@ -11,6 +11,7 @@ from allennlp.data.dataset_readers.reading_comprehension.my_msmarco import MsMar
 from allennlp.data.dataset_readers.reading_comprehension.msmarcofix import MsMarcoReader
 from allennlp.data.dataset_readers.reading_comprehension.msmarcov21 import MsMarcoReader
 from allennlp.data.dataset_readers.reading_comprehension.msmarcov20_single_paragraph import MsMarcoReaderTrain, MsMarcoReaderTest
+from allennlp.data.dataset_readers.reading_comprehension.msmarcov20_single_paragraph_sumobj import MsMarcoReaderTrain, MsMarcoReaderTest
 from allennlp.data.dataset_readers.reading_comprehension.msmarcov20_confidence import MsMarcoReaderTrain, MsMarcoReaderTest
 from allennlp.data.dataset_readers.reading_comprehension.multi_squad_train import SquadReader
 from allennlp.data.dataset_readers.reading_comprehension.multi_squad_dev import SquadReader

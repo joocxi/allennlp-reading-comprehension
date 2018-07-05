@@ -21,7 +21,7 @@ from allennlp.modules.tri_linear_attention import TriLinearAttention
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-@Model.register("model-msmarcov20-sum-obj")
+@Model.register("model-msmarcov20-sumobj")
 class ModelMSMARCO(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
@@ -110,8 +110,7 @@ class ModelMSMARCO(Model):
         # Shape: (batch_size, passage_length, encoding_dim)
         passage_question_vectors = util.weighted_sum(encoded_question, passage_question_attention)
 
-        # We replace masked values with something really negative here, so they don't affect the
-        # max below.
+        # We replace masked values with something really negative here, so they don't affect the max below.
         masked_similarity = util.replace_masked_values(passage_question_similarity,
                                                        question_mask.unsqueeze(1),
                                                        -1e7)
@@ -184,7 +183,7 @@ class ModelMSMARCO(Model):
         span_start_logits = util.replace_masked_values(span_start_logits, passage_mask, -1e7)
         span_end_logits = util.replace_masked_values(span_end_logits, passage_mask, -1e7)
         best_span = self.get_best_span(span_start_logits, span_end_logits)
-        
+ 
         output_dict = {
                 "passage_question_attention": passage_question_attention,
                 "span_start_logits": span_start_logits,
@@ -194,12 +193,41 @@ class ModelMSMARCO(Model):
                 "best_span": best_span,
                 }
 
+
         if span_start is not None:
-            loss = nll_loss(util.masked_log_softmax(span_start_logits, passage_mask), span_start.squeeze(-1))
-            self._span_start_accuracy(span_start_logits, span_start.squeeze(-1))
-            loss += nll_loss(util.masked_log_softmax(span_end_logits, passage_mask), span_end.squeeze(-1))
-            self._span_end_accuracy(span_end_logits, span_end.squeeze(-1))
-            self._span_accuracy(best_span, torch.stack([span_start, span_end], -1))
+            num_spans = span_start.size(1)
+            all_modified_start_logits = []
+            all_modified_end_logits = []
+            start_mask = passage_mask.clone()
+            end_mask = passage_mask.clone()
+
+            for b in range(batch_size):
+                # Shape: passage_length
+                start_idxs = Variable(torch.LongTensor(range(passage_length))).cuda()
+                end_idxs = Variable(torch.LongTensor(range(passage_length))).cuda()
+                for i in range(1, num_spans):
+                    if span_start[b, i].data[0] >= 0:
+                        start_idxs[span_start[b, i].data[0]].data = start_idxs[span_start[b, 0].data[0]].data
+                        end_idxs[span_end[b, i].data[0]].data = end_idxs[span_end[b, 0].data[0]].data
+                        start_mask[b, span_start[b, i].data[0]] = 0  
+                        end_mask[b, span_end[b, i].data[0]] = 0
+                    else:
+                        break
+                # Shape: passage_length
+                modified_start_logits = Variable(torch.zeros(passage_length)).cuda()
+                modified_end_logits = Variable(torch.zeros(passage_length)).cuda()
+
+                modified_start_logits.put_(start_idxs, span_start_logits[b]) 
+                modified_end_logits.put_(end_idxs, span_end_logits[b])
+
+                all_modified_start_logits.append(modified_start_logits)
+                all_modified_end_logits.append(modified_end_logits)
+
+            all_modified_start_logits = torch.stack(all_modified_start_logits, dim=0)
+            all_modified_end_logits = torch.stack(all_modified_end_logits, dim=0)
+
+            loss = nll_loss(util.masked_log_softmax(all_modified_start_logits, start_mask), span_start[:, 0].squeeze(-1))
+            loss += nll_loss(util.masked_log_softmax(all_modified_end_logits, end_mask), span_end[:, 0].squeeze(-1))
             output_dict["loss"] = loss
 
         # Compute the EM and F1 on SQuAD and add the tokenized input to the output.
