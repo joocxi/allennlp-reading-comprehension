@@ -21,3 +21,4 @@ from allennlp.models.reading_comprehension.model_squad_noanswer import ModelSQUA
 from allennlp.models.reading_comprehension.model_msmarcov20 import ModelMSMARCO
 from allennlp.models.reading_comprehension.model_msmarcov20_sumobj import ModelMSMARCO
 from allennlp.models.reading_comprehension.model_msmarcov20_sharenorm import ModelMSMARCO
+from allennlp.models.reading_comprehension.model_msmarcov20_sharenorm_sumobj import ModelMSMARCO
